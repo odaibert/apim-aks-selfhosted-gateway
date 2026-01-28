@@ -1,0 +1,61 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.34.44.8038",
+      "templateHash": "2474785104072471583"
+    }
+  },
+  "parameters": {
+    "apimName": {
+      "type": "string",
+      "defaultValue": "apim-hybrid-demo-apim",
+      "metadata": {
+        "description": "Name of the existing API Management instance"
+      }
+    }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.ApiManagement/service/apis",
+      "apiVersion": "2023-05-01-preview",
+      "name": "[format('{0}/{1}', parameters('apimName'), 'petstore-api')]",
+      "properties": {
+        "displayName": "Swagger Petstore",
+        "description": "Swagger Petstore API - Sample Pet Store Server based on OpenAPI 3.0",
+        "path": "petstore",
+        "protocols": [
+          "https"
+        ],
+        "format": "openapi+json-link",
+        "value": "https://petstore3.swagger.io/api/v3/openapi.json",
+        "subscriptionRequired": false
+      }
+    },
+    {
+      "type": "Microsoft.ApiManagement/service/gateways/apis",
+      "apiVersion": "2023-05-01-preview",
+      "name": "[format('{0}/{1}/{2}', parameters('apimName'), 'west-gateway', 'petstore-api')]",
+      "properties": {},
+      "dependsOn": [
+        "[resourceId('Microsoft.ApiManagement/service/apis', parameters('apimName'), 'petstore-api')]"
+      ]
+    }
+  ],
+  "outputs": {
+    "apiId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.ApiManagement/service/apis', parameters('apimName'), 'petstore-api')]"
+    },
+    "apiName": {
+      "type": "string",
+      "value": "petstore-api"
+    },
+    "apiPath": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.ApiManagement/service/apis', parameters('apimName'), 'petstore-api'), '2023-05-01-preview').path]"
+    }
+  }
+}

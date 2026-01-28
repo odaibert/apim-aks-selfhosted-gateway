@@ -1,0 +1,265 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.34.44.8038",
+      "templateHash": "3846954299272428201"
+    }
+  },
+  "parameters": {
+    "baseName": {
+      "type": "string",
+      "defaultValue": "apim-hybrid-demo",
+      "metadata": {
+        "description": "Base name for all resources"
+      }
+    },
+    "aksLocation": {
+      "type": "string",
+      "defaultValue": "westus3",
+      "metadata": {
+        "description": "Location for the AKS cluster (must support Availability Zones)"
+      }
+    },
+    "apimLocation": {
+      "type": "string",
+      "defaultValue": "eastus",
+      "metadata": {
+        "description": "Location for the APIM instance (control plane)"
+      }
+    },
+    "publisherEmail": {
+      "type": "string",
+      "defaultValue": "admin@contoso.com",
+      "metadata": {
+        "description": "Publisher email for APIM"
+      }
+    },
+    "publisherName": {
+      "type": "string",
+      "defaultValue": "Contoso",
+      "metadata": {
+        "description": "Publisher name for APIM"
+      }
+    },
+    "kubernetesVersion": {
+      "type": "string",
+      "defaultValue": "1.29",
+      "metadata": {
+        "description": "Kubernetes version for AKS"
+      }
+    },
+    "aksNodeVmSize": {
+      "type": "string",
+      "defaultValue": "Standard_DS2_v2",
+      "metadata": {
+        "description": "VM size for AKS nodes"
+      }
+    },
+    "aksNodeCount": {
+      "type": "int",
+      "defaultValue": 3,
+      "minValue": 1,
+      "maxValue": 10,
+      "metadata": {
+        "description": "Number of nodes in the AKS cluster"
+      }
+    },
+    "gatewayName": {
+      "type": "string",
+      "defaultValue": "west-gateway",
+      "metadata": {
+        "description": "Name of the self-hosted gateway"
+      }
+    },
+    "gatewayDescription": {
+      "type": "string",
+      "defaultValue": "Self-hosted gateway deployed to AKS in West US 3",
+      "metadata": {
+        "description": "Description of the self-hosted gateway"
+      }
+    }
+  },
+  "variables": {
+    "aksClusterName": "[format('{0}-aks', parameters('baseName'))]",
+    "apimName": "[format('{0}-apim', parameters('baseName'))]",
+    "aksDnsPrefix": "[format('{0}-dns', parameters('baseName'))]",
+    "vnetName": "[format('{0}-vnet', parameters('baseName'))]",
+    "aksSubnetName": "aks-subnet",
+    "vnetAddressPrefix": "10.0.0.0/16",
+    "aksSubnetAddressPrefix": "10.0.0.0/22"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Network/virtualNetworks",
+      "apiVersion": "2023-09-01",
+      "name": "[variables('vnetName')]",
+      "location": "[parameters('aksLocation')]",
+      "properties": {
+        "addressSpace": {
+          "addressPrefixes": [
+            "[variables('vnetAddressPrefix')]"
+          ]
+        },
+        "subnets": [
+          {
+            "name": "[variables('aksSubnetName')]",
+            "properties": {
+              "addressPrefix": "[variables('aksSubnetAddressPrefix')]"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.ContainerService/managedClusters",
+      "apiVersion": "2024-01-01",
+      "name": "[variables('aksClusterName')]",
+      "location": "[parameters('aksLocation')]",
+      "identity": {
+        "type": "SystemAssigned"
+      },
+      "properties": {
+        "kubernetesVersion": "[parameters('kubernetesVersion')]",
+        "dnsPrefix": "[variables('aksDnsPrefix')]",
+        "enableRBAC": true,
+        "networkProfile": {
+          "networkPlugin": "azure",
+          "networkPolicy": "azure",
+          "serviceCidr": "10.1.0.0/16",
+          "dnsServiceIP": "10.1.0.10",
+          "loadBalancerSku": "standard"
+        },
+        "agentPoolProfiles": [
+          {
+            "name": "systempool",
+            "count": "[parameters('aksNodeCount')]",
+            "vmSize": "[parameters('aksNodeVmSize')]",
+            "osType": "Linux",
+            "mode": "System",
+            "type": "VirtualMachineScaleSets",
+            "enableAutoScaling": false,
+            "availabilityZones": [
+              "1",
+              "2"
+            ],
+            "vnetSubnetID": "[reference(resourceId('Microsoft.Network/virtualNetworks', variables('vnetName')), '2023-09-01').subnets[0].id]"
+          }
+        ],
+        "oidcIssuerProfile": {
+          "enabled": true
+        },
+        "securityProfile": {
+          "workloadIdentity": {
+            "enabled": true
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/virtualNetworks', variables('vnetName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[format('Microsoft.Network/virtualNetworks/{0}', variables('vnetName'))]",
+      "name": "[guid(resourceId('Microsoft.Network/virtualNetworks', variables('vnetName')), resourceId('Microsoft.ContainerService/managedClusters', variables('aksClusterName')), 'Network Contributor')]",
+      "properties": {
+        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4d97b98b-1d4f-4787-a291-c67834d212e7')]",
+        "principalId": "[reference(resourceId('Microsoft.ContainerService/managedClusters', variables('aksClusterName')), '2024-01-01', 'full').identity.principalId]",
+        "principalType": "ServicePrincipal"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.ContainerService/managedClusters', variables('aksClusterName'))]",
+        "[resourceId('Microsoft.Network/virtualNetworks', variables('vnetName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.ApiManagement/service",
+      "apiVersion": "2023-05-01-preview",
+      "name": "[variables('apimName')]",
+      "location": "[parameters('apimLocation')]",
+      "sku": {
+        "name": "Developer",
+        "capacity": 1
+      },
+      "identity": {
+        "type": "SystemAssigned"
+      },
+      "properties": {
+        "publisherEmail": "[parameters('publisherEmail')]",
+        "publisherName": "[parameters('publisherName')]",
+        "publicNetworkAccess": "Enabled"
+      }
+    },
+    {
+      "type": "Microsoft.ApiManagement/service/gateways",
+      "apiVersion": "2023-05-01-preview",
+      "name": "[format('{0}/{1}', variables('apimName'), parameters('gatewayName'))]",
+      "properties": {
+        "description": "[parameters('gatewayDescription')]",
+        "locationData": {
+          "name": "[parameters('aksLocation')]",
+          "city": "Phoenix",
+          "countryOrRegion": "United States"
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.ApiManagement/service', variables('apimName'))]"
+      ]
+    }
+  ],
+  "outputs": {
+    "aksClusterName": {
+      "type": "string",
+      "metadata": {
+        "description": "The name of the AKS cluster"
+      },
+      "value": "[variables('aksClusterName')]"
+    },
+    "apimName": {
+      "type": "string",
+      "metadata": {
+        "description": "The name of the APIM instance"
+      },
+      "value": "[variables('apimName')]"
+    },
+    "apimGatewayUrl": {
+      "type": "string",
+      "metadata": {
+        "description": "The gateway URL of the APIM instance"
+      },
+      "value": "[reference(resourceId('Microsoft.ApiManagement/service', variables('apimName')), '2023-05-01-preview').gatewayUrl]"
+    },
+    "selfHostedGatewayName": {
+      "type": "string",
+      "metadata": {
+        "description": "The name of the self-hosted gateway"
+      },
+      "value": "[parameters('gatewayName')]"
+    },
+    "resourceGroupName": {
+      "type": "string",
+      "metadata": {
+        "description": "The resource group name"
+      },
+      "value": "[resourceGroup().name]"
+    },
+    "aksFqdn": {
+      "type": "string",
+      "metadata": {
+        "description": "The AKS cluster FQDN"
+      },
+      "value": "[reference(resourceId('Microsoft.ContainerService/managedClusters', variables('aksClusterName')), '2024-01-01').fqdn]"
+    },
+    "oidcIssuerUrl": {
+      "type": "string",
+      "metadata": {
+        "description": "OIDC Issuer URL for Workload Identity"
+      },
+      "value": "[reference(resourceId('Microsoft.ContainerService/managedClusters', variables('aksClusterName')), '2024-01-01').oidcIssuerProfile.issuerURL]"
+    }
+  }
+}
